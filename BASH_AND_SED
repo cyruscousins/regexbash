@@ -1,0 +1,88 @@
+We have already mentioned sed in passing, but now I give it the introduction it deserves.  SED stands for ultimate Stream EDitor, and despite the poorly formed acronym, is an excellent program.  By default, sed accepts input on stdin, performs transformations, and prints the results to stdout.  
+
+A few shell operators, and a basic understanding of unix file descriptors will help us move data around between programs.  
+
+A file descriptor is an integer that maps to some file the operating system has open.  In the world of unix like operating systems, the term file can be misleading, though it is similar to the C construct of a FILE*.  stdin, stderr, stdout, pipes, named pipes, networks, usb ports, and many other things can be written to as though they are files, because somewhere in the kernel, they are to some extent.
+
+In most common shells, we can use operators to control the flow of data between programs.  The pipe operator ('|') redirects the output of one program (stdout) to the input of another (stdin).  We have already seen this used in conjunction with grep: it is a great way to search through long outputs.  For example, the history command outputs the last n commands you have entered into the terminal, for some n that depends on your system settings.  Perhaps you figured out a tricky regex, and applied it with sed, but can't remember it.  Rather than figure out the regex again, or trawl through our entire history, we can simply use
+
+history | grep sed
+
+and the output of history will be filtered by grep to show just the commands involving sed.  Hopefully we can now find the command.
+
+In addition to the | operator, we have the funnel operator, < which can funnel the contents of a file to a program.  We can use this to search for a keyword in a file, like so:
+
+grep KEYWORD < MYFILE
+
+But that's not all folks.  We can even write the result of stdout to a file, using the > operator.  Using this, sed and other utilities can be just one part of a long pipeline, and the results can be saved to disk at any time.  
+
+sed s/FIND_REGEX/REPLACE_REGEX/ < FILEIN > FILEOUT
+
+This is useful for refactoring.  As we all know, fileio is extremely slow.  If we are creating temporary files read only once by various programs, we have a utility known as a named pipe.  The named pipe exists in ram, but has an entry on the filesystem, thus circumventing file IO costs.  We create it with the mkfifo command, like so:
+
+mkfifo /tmp/PIPE0
+sed s/FIND_REGEX/REPLACE_REGEX/ < FILEIN > /tmp/PIPE0
+#use the pipe somewhere else
+rm /tmp/PIPE0
+
+It is important to use rm on named pipes, or their file system entries will not be removed.  Some programs require filenames, so we cannot pipe data in with |, but named pipes will trick the programs.  IO blocks on the pipe until data is available, EOF is sent when the pipe is closed (with rm).
+
+Sometimes, we want to capture the stderr of a program, such as when we want to capture compiler errors.  There are various ways of performing this, the most useful of which is the &> operator, which funnels both stdout and stderr to a single file.   
+
+We can use these tools to create powerful scripts to automate many common tasks and save ourselves a lot of work.  Scripts can also be used for installations and to perform tasks often associated with fully fledged programs.  The dask of compiling a large C project often seems like a daunting one.  Let us craft a simple script to automate the process.
+
+We start with the line:
+
+#! /bin/bash
+
+This line starts with the shbang "#!", which is either interpreted as a comment, or as a directive, telling the shell which shell to use (and switch if necessary).  It is not 100% portable, but it helps to increase the portability of our script.  We now define some variables we will use later, such as CFLAGS, the flags we wish to pass to the compiler, and LFLAGS, the flags we wish to pass to the linker, and NAME, the name we want for the executable.  These are all bash variables, which are typeless (really they are basically strings with a few tricky properties), and assignment is done with the = operator.  Surrounding by "" is used for weak strings: variable names and variable extensions can be put inside a weak string.  Alternatively, we could use the strong string '', in which case variable names and extensions cannot be performed inside the string.
+
+CFLAGS="-O1 -g"
+LFLAGS=""
+NAME="PRGM"
+
+We now want to iterate over each file in the folder, and compile each one.  We can do this like so:
+
+for cfile in *.cpp
+  do
+    g++ -o ${cfile%cpp}o $CFLAGS $cfile
+  done
+
+Here $CFLAGS accesses the value of CFLAGS, which we set earlier.  This is called variable extension.  The line for cfile in *.cpp is a bit tricky: *.cpp is expanded by bash to all files with url *.cpp relative to the current folder.  This set is iterated over by the for loop, storing each filename in the variable f.  We then compile with g++, expanding CFLAGS and the name of the file.  We also set the -o flag (the name flag) to ${cfile%cpp}o.  The ${cfile%cpp} removes cpp from the end of the variable cfile, and the following o adds an o onto the end of the filename.  This changes FILENAME.cpp to FILENAME.o, allowing us to output the object file produced by the compiler to its own .o file.  Note that the % operator removes from the end of a string, and # removes from the beginning.  Both of these operators are extremely useful, and many more exist to allow us to do variable expansion in many ways.  Finally, we need to run the linker in our script.  We can use the following line to run compiler with the compiler and linker flags on all the .o files, and output to the binary NAME:
+
+g++ $CFLAGS $LFLAGS -o $NAME *.o
+
+
+This works adequately for small projects, including most if not all individual and group undergraduate cs projects.  However, for a larger project, we may need something a bit more complicated.  Our source files may lie in a tree of files, rather than a single folder, and we may want to output our .o files to their own folder.  The following script accomplishes this by iterating through a file tree, outputting to an object file directory, and compiling the result.
+
+#! /bin/bash
+CFLAGS="-O1 -g"
+LFLAGS=""
+NAME="PRGM"
+OBJDIR="obj"
+SRCDIR="src"
+
+function compileDirectory{
+  for file in $1/*
+    do
+      if [-d $file]
+        then
+          compileDirectory $file
+        else
+          if [[ $file == *.cpp ]]
+            then
+              g++ -o $OBJDIR/${cfile%cpp}o $CFLAGS $file &
+            fi
+        fi
+    done
+}
+
+mkdir -f $OBJDIR
+compileDirectory $SRCDIR
+wait
+g++ $CFLAGS $LFLAGS -o $NAME $OBJDIR/*.o
+
+This more complicated script recursively compiles every file in the source directory, outputting to an object directory containing .o files, and then links them into a binary named NAME.  To do this, we iterate over every item in the src directory, recursively iterating further on directories, and for each file that ends in .cpp (we perform this test by seeing if the file is equal to something ending in .cpp.  The * operator in bash matches any string).  The mkdir -f command makes a directory, but surpresses error messages.  This is necessary, as after running this script once, the directory will already have been created, so will cause an error when we try to remake it.  
+
+The -f flag is specific to the mkdir program.  Note that the compile line is terminated with a single &.  This signifies to run the command in a newsubshell, as a new process.  The wait command before the linker waits until all subshell processes finish.  We need to wait for all subprocesses to finish to link the .o files.  We do this for performance reasons in large scale projects: compiling can be very slow, especially for large numbers of source files, when using C++, and when using the optimization flags.  Compiling each file in a separate subshell allows them to compile separately, possibly on separate cores.  Compilation of large projects can take hours, even on modern hardware, so utilizing multiple cores makes the arduous task of waiting for the compiler to finish less painful.
+

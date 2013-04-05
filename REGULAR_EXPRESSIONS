@@ -1,0 +1,116 @@
+Regular Expressions can be defined as a formal language used to match substrings of query strings.
+
+The "brand" of regular expressions that you will encounter most often in the "real world" is the Extended Regular Expression as defined in IEEE POSIX 1003.2 (Section 2.8).  Often times, the implementations we use are actually extensions of this standard, but compatibility is (usually) pretty good.
+
+We can use regular expressions for many purposes.  The most common uses include searching, find/replace (substitution), text parsing, and identification of simple types of character strings.
+
+Diving In:
+
+Any regular expression query begins with 2 strings, a target string and a regular expression.  The search expression is used to find matches in the target string.
+
+Matching:
+
+In regular expressions, every character, except for special characters [\^$.|?*+() are considered literal characters.  
+
+We can use these characters to form matches.  In the query string:
+"Cat attack at cat attic"
+the regular expression "at" matches 5 times.  Try it out:
+
+echo "Cat attack at cat attic" | grep at
+
+Now lets try something trickier.  Suppose we want to match a word, but we also want to match common misspellings of the word.  We have several tools at our disposal:
+
+Character classes: A group of characters inside square brackets will match any one of the characters in the group.  Try this:
+
+echo "fat cat rat pat" | grep [fcrp]at 
+
+Additionally, we can include a range of characters in a character class by separating them with a '-'.  [a-z] matches any lowercase english character.  Some special characters, such as (), behave as normal literal characters inside a character class, as their functionality does not make sense in this context.  There are a few more tricky rules about character classes, but this covers the basics.
+
+Character classes are incredibly useful, but in the real world, we also want to be able to match deleted and inserted characters.  3 regular expression operators exist for this purpose: ?, +, and *.  The ? operator matches 0 or 1 occurences of a character, the + operator matches 1 or more occurences, and the * operator matches 0 or more occurences.  By using these operators, and combining them with other regex syntax, we can accomplish great things.  
+
+As a simple example, we could easily use what we have learned to match email addresses.  We could use this in the real world to make a large profit trawling the web and selling the email addresses we find.  Sidenote: please don't do this, regular expressions were not meant to be used for evil.
+
+We can match the string:
+furball72@gmail.com
+
+with the regular expression:
+"[a-zA-Z0-9[.]]+@[a-z]+[.][a-z]+"
+
+This will match most email addresses (although the rules for a valid email address are quite complicated, and currently beyond the scope of our regular expression abilities.
+
+I wouldalso like to take this time to mention that I do not own the email address "furball72@gmail.com", nor do I know the owner, as it was picked at random from my mind.  Please do not send mail to this address.
+
+Now lets try something a bit trickier.  Suppose we want to match the declaration of a floating point variable in the java programming language.  Example:
+
+"float cat7Velocity =  0.372f;"
+
+We could match this string with a regular expression:
+
+"float[ \t\n\r]*[a-zA-Z_][a-zA-Z_0-9]*[ \t\n\r]*=[ \t\n\r]*[0-9]*[.]?[0-9]*f?[ \t\n\r]*;"
+
+That looks absolutely horrifying.  It isn't, let's break it down piece by piece.  
+1) "float" matches the literal string "float".
+2) "[ \t\n\r]+" matches whitespace (\t\n\r) are escape sequences for tab, newline, and return.  We use the + operator, because at least one character of whitespace is required, and more are optional.  
+3) "[a-zA-Z_][a-zA-Z_0-9]*" matches a legal java variable name.  Variables start with an upper or lower case letter or an _.  The remaining characters in a variable name may also contain numerals.  Thus, we match a single letter or underscore, then as many alphanumeric characters or underscores as we can with the * operator.  
+4) "[ \t\n\r]*=[ \t\n\r]*" More whitespace, a literal '=' char, and then even more whitespace.  No tricks here.
+5) "[0-9]*[.]?[0-9]*f?"  This is the most difficult part to get right.  Here we match an arbitrary quantity of digits, an optional '.' character (we must escape '.' in the regular expression, as it has special meaning.  A '.' will match any character except \r and \n+, a second arbitrary number of digits following the decimal point, and then the 'f' character to denote a floating point.  
+6) "[ \t\n\r]*;"  Match whitespace and a semicolon.  Very straightforward.
+
+It is important to note that this expression matches nearly all java floating point definitions, with the exception of those containing internal comments such as:
+
+float thornInYourSide = /*won't match*/ 3.14159f;
+
+Unfortunately, this expression also matches improper definitions, such as:
+
+float incorrectFloat = .;
+float alsoInvalid = f;
+
+It is important to think both of strings that will be incorrectly matched and strings that will incorrectly not be matched when creating regular expressions.  
+
+To solve the first problem of the comments, it is best to approach the problem from a different angle: we can preprocess the data to remove all comments.  The unix utility sed is just the thing in this case.  Sed has a regular expression substitution feature that takes the form
+
+s/REGULAR_EXPRESSION/SUBSTITUTION_STRING/
+
+We can remove java comments of both types by piping the file through sed,
+
+cat filename.java | sed s/\/\/.*// s/\/\*.*\*\///
+
+In sed, we are using '/' to delimit the regex from the substitution string, so we must escape it with '\' when we want a literal '/' in the regex.  This is important, different tools and languages have their own characters which must be escaped, in addition to the regex characters that must be escaped ('*' in this example).  For example, in both sed and grep, we must escape '?', '+', ')', '(', and '|', as they has its own meaning in these programs.  Remembering when and where different characters need to be escaped can be quite a chore, and a common source of the regular expression blues.
+
+This ends up looking a bit messy, but what we are doing is:
+for each line (this is how sed works), replace all instances of "//" follwed by any other character any number of times with nothing, and then the second half substutes /*, any number of any other characters, */ with nothing, thus removing all single line comments.  Sed operates on lines individually, so in this example we only remove single line comments.  We can pipe the output of sed wherever we need it, and apply the floating point matching regex as desired (single line internal comments will be gone).
+
+To resolve the remaining issues of false positives, we need a few more tools.  Specifically, we need a more exact method of matching groups of characters.  Using (), we can create an ordered regex sequence to be matched as a group, and using |, we can match one item OR another.  These operators are commonly used together.  Suppose we want to match a short phrase containing a synonym or alternate word, such as:
+
+The cat played with the string.
+OR
+The kitten played with the string.
+
+We can match either string with
+"The (cat)|(kitten) played with the string."
+
+Now we apply this to the floating point definition matching problem, specifically the numeric part of it. Try this regex:
+
+"([0-9]+)|([0-9]*[.][0-9]+f)[ \t\n\r]*;"
+
+This will match an integer OR a valid floating point, followed by optional whitespace, followed by a semicolon.  It is very important to think about exactly what it is that you want matched and what you don't want matched when crafting regular expressions, as sneaky strings can sneak up on the unwary and match when such matching can have disastrous consequences.
+
+How do regular expressions actually work?
+
+For our purposes, it will suffice to say that they are very complicated, and when given operators such as '|' and character classes, regular expressions have the "greediness" property; they will match as much as they can, regardless of how they get to where they need to go.  For example [ab]* will match all of the string aaabbbaaaba, although it also matches just the first character of the string, as well as the null string.  This seems obvious, but is important to keep in mind in more complicated examples, such as the regex "a+ab", which matches aaab.  If the regex did not match the longest possible string, and only matched locally, it would not match this string, because it would first match aaa from the "a+", but would not find the next a so would fail.  It is interesting to note that the "greedyness" property of regex syntax is the exact opposite of a greedy algorithm.  This is a source of confusion.  In summary, regexes give the longest possible match through all paths through the query sequence.  This makes them a very powerful tool.
+
+Backreferences, another powerful feature of regular expressions:
+
+The () operator is more powerful than I let on earlier.  As it turns out, each string captured in a () group is saved as a backreference, and can be referenced again later in the regex.  In many utilities, it can even be used in substitutions, though the syntax for this is not widely portable, as substitution is not part of the IEEE Extended Regular Expression standard.  
+
+Suppose we want to perform a substitution on all the email addresses on a page in an attempt to obfuscate them, protecting them from potential scraping bots.  In sed, we can do this with a regular expression substition using backreferences.  We do this with the following syntax:
+
+sed "s/\([a-zA-Z0-9\.]\+\)@\([a-z]\+\)\.\([a-z]\+\)/\1 AT \2 DOT \3/"
+
+This will transform an email such as "funkyfeline44@kittycentral.edu", easily harvested by machines, to "funkyfeline44 AT kittycentral DOT edu".  This is useful in scripts, but also incredibly useful when working with any sort of text, including programs and essays.  Learning to use regular expression find/replace in your editor of choice is of great value when refactoring code, and valuable when processing any type of data.
+
+
+Regular Expressions in the wild:
+Regular expression capabilities can be found in many common unix utilities and command line application, including vim, emacs, sed, grep, and many more.  They are also found in word processing programs such as LibreOffice Writer and OpenOffice Writer, and many other programs involving search utilities, such as Firefox and Chrome.  
+
+
